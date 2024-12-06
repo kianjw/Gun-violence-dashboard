@@ -1,0 +1,121 @@
+import sqlite3
+import pandas as pd
+import plotly.graph_objects as go
+from dash import dcc, html, Dash
+from dash.dependencies import Input, Output
+
+# Step 1: Connect to the SQLite database and extract data
+db_path = "FinalProject.db"  # Update with the path to your database
+conn = sqlite3.connect(db_path)
+
+# Query to get the incident data
+incidents_query = """
+SELECT IncidentDate
+FROM incidents
+"""
+df_incidents = pd.read_sql_query(incidents_query, conn)
+
+# Query to get victim ratio data
+victim_ratio_query = """
+SELECT 
+    Victims.VictimKilled AS Victims_Killed,
+    Victims.VictimInjured AS Victims_Injured,
+    Incidents.IncidentDate
+FROM 
+    Incidents
+NATURAL JOIN 
+    Victims
+"""
+df_victims = pd.read_sql_query(victim_ratio_query, conn)
+conn.close()
+
+# Step 2: Data preprocessing
+# Convert the date strings to datetime objects
+df_incidents['IncidentDate'] = pd.to_datetime(df_incidents['IncidentDate'])
+df_victims['IncidentDate'] = pd.to_datetime(df_victims['IncidentDate'])
+
+# Process incidents data to group by day of the week
+daily_incident_data = df_incidents.groupby(df_incidents['IncidentDate'].dt.day_name()).size().reset_index()
+daily_incident_data.columns = ['day', 'incidents']
+
+# Sort days of the week in proper order
+day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+daily_incident_data['day'] = pd.Categorical(daily_incident_data['day'], categories=day_order, ordered=True)
+daily_incident_data = daily_incident_data.sort_values('day')
+
+# Process victim ratio data to group by day of the week
+df_victims['Total_Victims'] = df_victims['Victims_Killed'] + df_victims['Victims_Injured']
+df_victims['day'] = df_victims['IncidentDate'].dt.day_name()
+daily_victim_data = df_victims.groupby('day').agg({'Victims_Killed': 'sum', 'Total_Victims': 'sum'}).reset_index()
+daily_victim_data['Victim_Ratio'] = daily_victim_data.apply(
+    lambda row: (row['Victims_Killed'] / row['Total_Victims']) * 100 if row['Total_Victims'] > 0 else 0,
+    axis=1
+)
+daily_victim_data['day'] = pd.Categorical(daily_victim_data['day'], categories=day_order, ordered=True)
+daily_victim_data = daily_victim_data.sort_values('day')
+
+# Merge both datasets for visualization
+combined_daily_data = pd.merge(daily_incident_data, daily_victim_data, on='day', how='outer')
+
+# Step 3: Initialize the Dash app
+app = Dash(__name__)
+
+# Layout for the Dash app
+app.layout = html.Div([
+    html.H1("Incidents and Victim Ratios by Day of the Week"),
+    
+    html.Label("Select Metric:"),
+    dcc.Dropdown(
+        id='metric-dropdown',
+        options=[
+            {'label': 'Number of Incidents', 'value': 'incidents'},
+            {'label': 'Victim Ratio (%)', 'value': 'Victim_Ratio'}
+        ],
+        value='incidents',  # Default selection
+        placeholder="Select a Metric"
+    ),
+    
+    dcc.Graph(id='bar-chart')
+])
+
+# Step 4: Callback to update the bar chart based on the selected metric
+@app.callback(
+    Output('bar-chart', 'figure'),
+    Input('metric-dropdown', 'value')
+)
+def update_chart(selected_metric):
+    if selected_metric == 'incidents':
+        title = "Number of Incidents by Day of Week"
+        y_data = combined_daily_data['incidents']
+        y_axis_title = "Number of Incidents"
+    else:
+        title = "Victim Ratio by Day of Week"
+        y_data = combined_daily_data['Victim_Ratio']
+        y_axis_title = "Victim Ratio (%)"
+    
+    fig = go.Figure(data=[
+        go.Bar(
+            x=combined_daily_data['day'],
+            y=y_data,
+            marker=dict(
+                color=y_data,
+                colorscale='Reds',
+                cmin=y_data.min(),
+                cmax=y_data.max(),
+                colorbar=dict(title=y_axis_title)
+            )
+        )
+    ])
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title="Day of Week",
+        yaxis_title=y_axis_title,
+        template='plotly_white'
+    )
+    
+    return fig
+
+# Step 5: Run the Dash app
+if __name__ == '__main__':
+    app.run_server(debug=True, port=8052)

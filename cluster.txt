@@ -1,0 +1,152 @@
+import sqlite3
+import pandas as pd
+import dash
+from dash import dcc, html
+from dash.dependencies import Input, Output
+import dash_leaflet as dl
+
+# Step 1: Connect to the SQLite database and extract data
+db_path = "FinalProject.db"  # Update with the correct path to your DB file
+conn = sqlite3.connect(db_path)
+
+# Updated query: Count incidents and sum victims
+query = """
+SELECT 
+    Locations.StateName,
+    Locations.City_CountyName,
+    Locations.Latitude,
+    Locations.Longitude,
+    COUNT(Incidents.IncidentID) AS TotalIncidents,  -- Count incidents
+    SUM(Victims.VictimKilled) AS TotalKilled,       -- Sum killed victims
+    SUM(Victims.VictimInjured) AS TotalInjured,    -- Sum injured victims
+    Incidents.IncidentDate                         -- Incident date
+FROM 
+    Incidents
+JOIN 
+    Locations
+ON 
+    Incidents.LocationID = Locations.LocationID
+JOIN 
+    Victims
+ON 
+    Incidents.VictimID = Victims.VictimID
+GROUP BY 
+    Locations.Latitude, Locations.Longitude, Locations.StateName, Locations.City_CountyName, Incidents.IncidentDate
+"""
+
+# Load the data into a pandas DataFrame
+incidents_data = pd.read_sql_query(query, conn)
+conn.close()
+
+# Step 2: Prepare the data
+incidents_data['TotalVictims'] = incidents_data['TotalKilled'] + incidents_data['TotalInjured']
+incidents_data['IncidentDate'] = pd.to_datetime(incidents_data['IncidentDate'])  # Convert dates to datetime format
+
+# Get date range for slider
+min_date = incidents_data['IncidentDate'].min()
+max_date = incidents_data['IncidentDate'].max()
+
+# Prepare percentile values for slider
+percentiles = {
+    '0%': incidents_data['TotalIncidents'].quantile(0),
+    '25%': incidents_data['TotalIncidents'].quantile(0.25),
+    '50%': incidents_data['TotalIncidents'].quantile(0.50),
+    '75%': incidents_data['TotalIncidents'].quantile(0.75),
+    '90%': incidents_data['TotalIncidents'].quantile(0.90),
+    '100%': incidents_data['TotalIncidents'].quantile(1.0)
+}
+slider_marks = {i: f"{k}" for i, (k, _) in enumerate(percentiles.items())}
+
+# Step 3: Initialize the Dash app
+app = dash.Dash(__name__)
+
+# Step 4: Define the layout for the Dash app
+app.layout = html.Div([
+    html.H1("Incident Map Dashboard"),
+    html.Label("Filter by Total Incidents Percentile Range:"),
+    dcc.RangeSlider(
+        id='percentile-range-slider',
+        min=0,
+        max=len(percentiles) - 1,  # 0 to 5 (for 6 percentiles)
+        step=1,
+        value=[0, len(percentiles) - 1],  # Default to full range
+        marks=slider_marks
+    ),
+    html.Label("Filter by Date Range:"),
+    dcc.DatePickerRange(
+        id='date-picker-range',
+        start_date=min_date,
+        end_date=max_date,
+        min_date_allowed=min_date,
+        max_date_allowed=max_date,
+    ),
+    dl.Map(
+        id='incident-map',
+        children=[
+            dl.TileLayer(),
+            dl.LayerGroup(id="marker-layer")
+        ],
+        style={'width': '100%', 'height': '600px'},
+        center=[39.8283, -98.5795],  # Center map over the USA
+        zoom=5
+    )
+])
+
+# Step 5: Define the callback to update the markers dynamically
+@app.callback(
+    Output('marker-layer', 'children'),
+    [Input('percentile-range-slider', 'value'),
+     Input('date-picker-range', 'start_date'),
+     Input('date-picker-range', 'end_date')]
+)
+def update_markers(selected_range, start_date, end_date):
+    # Map slider values back to percentiles
+    selected_percentiles = list(percentiles.values())
+    min_percentile_value = selected_percentiles[selected_range[0]]
+    max_percentile_value = selected_percentiles[selected_range[1]]
+
+    # Filter data based on the percentile range
+    filtered_data = incidents_data[
+        (incidents_data['TotalIncidents'] >= min_percentile_value) &
+        (incidents_data['TotalIncidents'] <= max_percentile_value)
+    ]
+
+    # Filter data based on the selected date range
+    filtered_data = filtered_data[
+        (filtered_data['IncidentDate'] >= pd.to_datetime(start_date)) &
+        (filtered_data['IncidentDate'] <= pd.to_datetime(end_date))
+    ]
+
+    # Get the maximum victims in the filtered data for color scaling
+    max_victims = filtered_data['TotalVictims'].max() if not filtered_data.empty else 1
+
+    # Create markers based on the filtered data
+    markers = [
+        dl.CircleMarker(
+            center=[row['Latitude'], row['Longitude']],
+            radius=15 + (row['TotalIncidents'] / max(percentiles.values()) * 20),  # Scale radius by total incidents
+            color=f"rgba(255, 0, 0, {row['TotalVictims'] / max_victims})",  # Scale color intensity by severity
+            fill=True,
+            fillColor=f"rgba(255, 0, 0, {row['TotalVictims'] / max_victims})",  # Same fill color
+            fillOpacity=0.7,
+            children=[
+                dl.Popup(
+                    html.Div([
+                        html.P(f"State: {row['StateName']}"),
+                        html.P(f"City/County: {row['City_CountyName']}"),
+                        html.P(f"Date: {row['IncidentDate'].date()}"),
+                        html.P(f"Total Incidents: {row['TotalIncidents']}"),
+                        html.P(f"Total Killed: {row['TotalKilled']}"),
+                        html.P(f"Total Injured: {row['TotalInjured']}"),
+                        html.P(f"Total Victims: {row['TotalVictims']}")
+                    ])
+                )
+            ]
+        )
+        for _, row in filtered_data.iterrows()
+    ]
+    return markers
+
+# Step 6: Run the Dash app
+if __name__ == '__main__':
+    app.run_server(debug=True, port=9003)

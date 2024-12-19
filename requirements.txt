@@ -1,6 +1,0 @@
-dash
-pandas
-plotly
-gunicorn
-sqlite3
-datetime

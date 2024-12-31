@@ -36,3 +36,6 @@ The analysis uses data from [Kaggle's Gun Violence Dataset](https://www.kaggle.c
 4. **Public Health Researchers**: Analyze societal impacts and regional disparities.
 5. **Advocacy Groups & NGOs**: Support campaigns for community safety and gun control reforms.
 
+### Interface view
+<img width="540" alt="Screenshot 2024-12-31 at 16 11 03" src="https://github.com/user-attachments/assets/0813dfdc-1acd-4de8-97bf-e2cea0ad47dc" />
+

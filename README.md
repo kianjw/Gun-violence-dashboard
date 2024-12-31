@@ -37,6 +37,7 @@ The analysis uses data from [Kaggle's Gun Violence Dataset](https://www.kaggle.c
 5. **Advocacy Groups & NGOs**: Support campaigns for community safety and gun control reforms.
 
 ### Interface view
-https://github.com/user-attachments/assets/e116b6fb-c8bc-42ff-be78-7366d4ac4f07
+https://github.com/user-attachments/assets/6b10cb4a-93e0-40d3-b7c6-bed7a2dc1bd7
+
 
 
